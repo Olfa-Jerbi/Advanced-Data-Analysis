@@ -1,0 +1,805 @@
+---
+title: "Assignment_3"
+author: "Olfa Jerbi 2021713094"
+date: '2022-05-09'
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+
+# Dataset visualization
+
+```{r a, echo=FALSE ,message=FALSE}
+
+#import dataset
+library(dplyr)
+library(tidyverse)
+x<- read_csv(file = 'D:\\Grad school\\2nd semester courses\\Advanced data analysis\\Assignment 3\\Metro_Interstate_Traffic_Volume.csv.gz')
+x<-data.frame(x)
+#save dataset as CSV file
+write.csv(x,"D:\\Grad school\\2nd semester courses\\Advanced data analysis\\Assignment 3\\data.csv", row.names = TRUE)
+
+#Import encoded data
+data <- data.frame(read.csv("D:\\Grad school\\2nd semester courses\\Advanced data analysis\\Assignment 3\\data_encoded.csv"))
+
+#Print dataset before encoding
+print( paste ("Let's first visualize the dataset in hand" ))
+library(knitr)
+kable(x[1:5,], caption="Data preview")
+print( paste ("As seen above, some of variables of the time series are text, so let's encode them to numbers before the analysis" ))
+kable(data[1:5,], caption="Encoded Data preview")
+
+#convert date variable to Date class
+#data$date_time <- as.Date(data$date_time, "%d%b%Y:%H:%M")
+
+#data$date_time 
+```
+
+# Descriptive statistics
+
+Let's start with observing the first variable "holiday" that describes whether the day is a holiday or not:
+```{r desc, echo=FALSE ,message=FALSE, warning=FALSE}
+library(ggplot2)
+g <- ggplot(x, aes(y=x$holiday))
+g + geom_bar()+ ggtitle("Holiday/Normal day distribution")
+```
+
+As normal days are much more frequent over the years of the data set, holidays are not as visible in the plot. To analyze them let's remove the normal days and plot the distribution again:
+
+```{r desc1, echo=FALSE ,message=FALSE, warning=FALSE}
+library(ggplot2)
+data_frame_mod <- subset(x, x$holiday !="None")
+g1 <- ggplot(data_frame_mod, aes(y=data_frame_mod$holiday))
+g1 + geom_bar(fill="lightblue")+ ggtitle("Holiday distribution")
+```
+
+We can observe that Labor day holiday and the holidays related to Christmas, as well as the Martin Luther King Jr holiday are slightly longer than other holidays.
+
+Let's now observe the variable temperature:
+```{r desc2, echo=FALSE ,message=FALSE, warning=FALSE}
+library(ggplot2)
+boxplot(data$temp, main="Temperature Boxplot")
+```
+
+As seen in the box plot observed above, the temperature is between ~225 and 320 Kelvin, with the presence of an outlier around 0. Since the temperatures are in kelvin it is unlikely to find a value of 0 Kelvin (-273.15°C), this could be due to some error in capturing the temperature.
+
+For rain variable:
+
+```{r desc3, echo=FALSE ,message=FALSE, warning=FALSE}
+#trace the boxplot of rain distribution
+library(ggplot2)
+boxplot(data$rain_1h)
+```
+
+We can see that the values are condensed around the value of 50mm with an outlier of almost 10000mm. To be able to observe the regular values (the ones except the unusual case of very high precipitations ), we remove that value and trace the histogram of the remaining values.
+
+PS: the high precipitation rate was in July 11, 2016 that was characterized by a flash flooding and high winds in the US (explaining the high value).
+
+```{r desc4, echo=FALSE ,message=FALSE, warning=FALSE}
+library(ggplot2)
+#remove unusual flood value
+raindata<- subset(x, x$rain_1h !=9831.3)
+#trace histogram
+hist(raindata$rain_1h,main="Rain distribution",col = "lightblue",border = "blue", xlim = c(0,60))
+```
+
+We can observe that a 0 to 5mm precipitation rate is the most frequent one. Other ranges are much less frequent especially when crossing the 10mm value.
+
+For snow variable, since it evidently cannot snow all year round, we can remove all the 0 values and then observe the distribution of this variable:
+
+```{r desc5, echo=FALSE ,message=FALSE, warning=FALSE}
+#trace the boxplot of rain distribution
+library(ggplot2)
+#remove days with no snow
+snowdata<- subset(x, x$snow_1h !=0)
+#trace histogram
+hist(snowdata$rain_1h,main="Snow distribution",col = "lightblue",border = "blue", xlim = c(0,1))
+```
+
+As observed above, the amount of snow is usually between 0.05 and 0.1mm (most frequent amount) and in cases of heavy snow it is between 0.9 and 1mm.
+
+For the clound variable:
+
+```{r desc6, echo=FALSE ,message=FALSE, warning=FALSE}
+#trace histogram
+hist(data$clouds_all,main="Cloud cover distribution",col = "lightblue",border = "blue",prob=TRUE)
+lines(density(data$clouds_all), # density plot
+ lwd = 2, # thickness of line
+ col = "chocolate3")
+```
+
+We can see that the variable "cloud" varies substantially where the value of around 0~5% and that of 85~90% are the most frequent ones (constituting the clear days and quite cloudy ones).
+
+Let's now observe the weather main and weather description variables. Starting with the main weather one:
+
+```{r desc7, echo=FALSE ,message=FALSE, warning=FALSE}
+library(ggplot2)
+#create color pallet for our case
+test.pallet <- c(
+  "#f71b75",
+   "#ef6438",
+  "#71af64",
+    "#ff001d",
+    "#f71b72","#4AFF33", "#3377FF","#FF3361","#D4FF33","#33FFFC","#7733FF")
+g2 <- ggplot(x, aes(y=x$weather_main))
+g2 + geom_bar(fill=test.pallet)+ ggtitle("Weather main distribution")
+
+```
+
+"Clouds" and "Clear" are the most frequent weather conditions, followed by "Mist", "rain" and "snow". Other weather conditions are way less frequent.
+Let's now move on to observe the description of weather:
+
+```{r desc8, echo=FALSE ,message=FALSE, warning=FALSE}
+library(ggplot2)
+g3 <- ggplot(x, aes(y=x$weather_description))
+g3 + geom_bar(fill="lightgreen")+ ggtitle("Weather description distribution")
+
+```
+
+# Time Series Exploration
+
+## Univariate analysis
+
+Let's start by tracing our times series:
+
+```{r pressure, echo=FALSE ,message=FALSE, warning=FALSE}
+library(ggplot2)
+library(TSstudio)
+library(xts)
+library(zoo)
+library(tidyr)
+library(FSAdata)
+library(tseries)
+library(purrr)
+library(dplyr)
+#Seperate date and time
+monthly_traffic<- tidyr::separate(x, date_time, c("date", "time"), sep = " ")
+#Fix date
+monthly_traffic <- tidyr::separate(monthly_traffic, date, c("year", "month", "day"), sep = "-")
+monthly_traffic_data <- monthly_traffic %>% group_by(year,month) %>% summarise(vol_by_month = sum(traffic_volume))
+#Make the new data frame and transform it into a time series
+df = ts(as.vector(monthly_traffic_data$vol_by_month), start=2012, end=2018, frequency=12)
+#Plot the Time series
+plot(df, ylab="Traffic Volume", type="o", main="Time Series Plot for Monthly Interstate Traffic Volume")
+```
+
+The data shows some seasonality trends and there is a huge decrease in the number of traffic at the end of 2014 even though it is holiday season. 
+We can also check whether the previous month’s traffic affects the traffic volume of the next month.
+
+```{r time1, echo=FALSE ,message=FALSE, warning=FALSE}
+library(FSAdata)
+library(tseries)
+library(purrr)
+library(TSA)
+plot(y=df,x=zlag(df), ylab="Traffic Volume", xlab="Previous month traffic volume", main="Scatter Plot of Previous Month Traffic Volume")
+```
+
+We can observe that there is a weak (and positive) correlation between the previous month’s traffic volume to the next month.
+
+Let's now decompose the time series to observe its components (level,trend,seasonality and noise):
+
+```{r time2, echo=FALSE ,message=FALSE, warning=FALSE}
+library(FSAdata)
+library(tseries)
+library(tsutils)
+decomp(df, outplot=c(TRUE,FALSE))
+
+```
+When observing this first decomposition we can notice that the time series in hand presents a bit of a trend, where we can also notice the drop in the traffic volume (the one in 2014). It seems to also have weak to no seasonality. Lastly, it presents a high residual error.
+To be able to properly evaluate all the components, it is needed to perform the necessary tests.
+
+Let's start with the trend component. 
+
+We consider the following pair of hypotheses:
+
+H0: no trend
+
+H1: linear trend
+
+that can be tested specifically using t-test.
+
+Assuming the time series may be auto-correlated (which is the usual case with observational data), we apply sieve-bootstrap version of the t-test, by adapting the approach of Noguchi, Gel, and Duguay (2011):
+
+
+```{r time3, echo=FALSE ,message=FALSE, warning=FALSE}
+library(funtimes)
+notrend_test(df)
+
+```
+
+The small p-value (0.038 < 0.05) correctly indicates that there is enough evidence to reject the hypothesis of no trend in H0 in favor of the alternative hypothesis of a linear trend. In other words our time series does in fact have a trend.
+
+Let's now check the seasonality component. Using the ACF and PACF graphs we can have an idea on whether a seasonality exists:
+
+```{r time4, echo=FALSE ,message=FALSE, warning=FALSE}
+acf(df, type= "correlation")
+pacf(df)
+```
+
+Observing the results of ACF and PACF, it is hard to observe any seasonality. To have definite results we can also try different seasonality tests such as Kruskall Wallis test, QS test, F-Test on seasonal dummies and Welch seasonality test.
+We can also use the function "isSeasonal" in R ( with test=combined) that returns a bollean indicating the presence/absence of seasonality based on the combination of multiple tests.
+The results are shown bellow:
+
+```{r time5, echo=FALSE ,message=FALSE, warning=FALSE}
+library(seastests)
+kw(df, freq = 12, diff = T, residuals = F, autoarima = T)
+qs(df, freq = 12, diff = T, residuals = F, autoarima = T)
+seasdum(df, freq = 12, autoarima = FALSE)
+welch(df, freq = 12, diff = T, residuals = F, autoarima = T, rank = F)
+isSeasonal(df, test = "combined", freq = 12)
+
+```
+
+
+All seasonality tests have high p-values (>.05) indicating the rejection of the hypothesis that the times series has a seasonality. Through the combined test too (result = FALSE) we can confirm the absence of a substantial seasonality in the traffic volume time series.
+
+PS: we can also use "seasplot" function in R to check for both trend and seasonality in our time series (as shown below the previously found results are confirmed).
+
+```{r time6, echo=FALSE ,message=FALSE, warning=FALSE}
+library(seastests)
+seasplot(df)
+```
+
+Let's now observe stationary: to do so we can use the Augmented Dickey-Fuller Test.
+
+
+```{r time, echo=FALSE ,message=FALSE, warning=FALSE}
+library(tseries)
+adf.test(df)
+```
+
+The p-value from the test is high (α > 0.05), then we cannot reject the null hypothesis and as a result we conclude that the time series is not stationary.
+
+To conclude, our time series:
+
+1- Has a trend (so needs de-trending)
+
+2- Has no seasonality
+
+3- Non stationary (needs to be normalized)
+
+4- Has high residual errors (needs some sort of filtering)
+
+
+In other words our data needs pre-treatement before we can move on to modelling and prediction.
+
+Starting with stationnarity, Box-cox transformation is applied to the series to help make the series stationary.
+
+
+```{r time8, echo=FALSE ,message=FALSE, warning=FALSE}
+library(TSA)
+df.transform<- BoxCox.ar(df, method="yule-walker")
+title(main="Log-likelihood vs values of lambda for traffic volume data", line=1)
+
+df.transform$ci
+```
+The 95% confidence interval for lambda contains the values of lambda between 1.6 and 2.0. Here, we take the center of the two numbers 1.8 to apply it to the Box-Cox transformation.
+
+```{r time9, echo=FALSE ,message=FALSE, warning=FALSE}
+library(TSA)
+par(mfrow=c(1,2))
+lambda=1.8
+df.box= (df^lambda-1)/lambda
+plot(df, type='l', ylab ='count for Original series')
+plot(df.box, type='l', ylab ="count for transformed series")
+mtext("Before and After applying Box-Cox to the Daily Interstate Traffic Volume Data", font=2, line=1, 
+      at=par("usr")[1]+0.05*diff(par("usr")[1:2]),
+      cex=1.2)
+hist(df.box, breaks=12, col="purple", main = "Histogram of Box-Cox Transformed Data ")
+```
+
+The data looks more normally distributed after the Box-Cox transformation as seen above. However, further Shapiro-Wilk normality test is applied to see if it passes the normality test.
+
+```{r time10, echo=FALSE ,message=FALSE, warning=FALSE}
+library(TSA)
+shapiro.test(df.box)
+```
+
+The Shapiro-Wilk normality test’s p-value is greater than 0.05 and therefore, we can assume the new transformed data is normally distributed. After normalizing, the data is differentiated to make the series stationary.
+
+```{r time11, echo=FALSE ,message=FALSE, warning=FALSE}
+library(TSA)
+df.diff = diff(df.box, differences =1)
+testAdf1 = adf.test(df.diff, alternative = "stationary")
+testAdf1
+```
+
+It is seen from the results that the p-value of the Dickey-Fuller test is < 0.01 and therefore the series is now stationary. Therefore, first order differentiating will be used to try to fit in the models. The following shows how the data looks like after applying Box-Cox and first order differentiating to the data. It can be seen that transformation also reduced the variance of the data as well.
+
+```{r time12, echo=FALSE ,message=FALSE, warning=FALSE}
+par(mfrow=c(1,2))
+plot(df, type='l', ylab ='count for Original series')
+plot(df.diff, type='l', ylab ="count for transformed series")
+mtext("Applying 1st Order Difference to Traffic Volume", font=2, line=1, 
+      at=par("usr")[1]+0.05*diff(par("usr")[1:2]),
+      cex=1.2)
+```
+
+As the series is stationary at this stage, EACF method will be tried on to help determine which models are to be tested out. According to the eacf table below, it is not clear which models are the best but we take ARMA(1,1), ARMA(1,2) and ARMA (1,3) as best possible candidates.
+
+```{r time13, echo=FALSE ,message=FALSE, warning=FALSE}
+eacf(df.diff, ar.max=10, ma.max=10)
+armaSubset = armasubsets(y=df.diff,
+                         nar=10,
+                         nma=10,
+                         y.name='test',
+                         ar.method='ols')
+plot(armaSubset)
+title('BIC Table for Model Selection', line = 5)
+```
+
+According to the BIC table, the smallest BIC are at lag 1,and 6 and at error lag 5,6 and 7. Therefore, we take ARIMA (1,1,1), ARIMA (1,1,2), ARIMA (1,1,3) , ARIMA (1,1,5) , ARIMA (1,1,6), ARIMA (6,1,5), and ARIMA(6,1,6) as possible candidates. 
+
+## ARIMA(1,1,1)
+
+```{r time14, echo=FALSE ,message=FALSE, warning=FALSE}
+library(lmtest)
+model_111_css = arima(df.diff,order=c(1,1,1),method='CSS')
+coeftest(model_111_css)
+
+model_111_ml = arima(df.diff,order=c(1,1,1),method='ML')
+coeftest(model_111_ml)
+```
+
+## ARIMA(1,1,2)
+
+```{r time15, echo=FALSE ,message=FALSE, warning=FALSE}
+model_112_css = arima(df.diff,order=c(1,1,2),method='CSS')
+coeftest(model_112_css)
+
+model_112_ml = arima(df.diff,order=c(1,1,2),method='ML')
+coeftest(model_112_ml)
+```
+
+## ARIMA(1,1,3)
+
+```{r time16, echo=FALSE ,message=FALSE, warning=FALSE}
+model_113_css = arima(df.diff,order=c(1,1,3),method='CSS')
+coeftest(model_113_css)
+
+model_113_ml = arima(df.diff,order=c(1,1,3),method='ML')
+coeftest(model_113_ml)
+```
+
+## ARIMA(1,1,5)
+
+```{r time17, echo=FALSE ,message=FALSE, warning=FALSE}
+model_115_css = arima(df.diff,order=c(1,1,5),method='CSS')
+coeftest(model_115_css)
+
+model_115_ml = arima(df.diff,order=c(1,1,5),method='ML')
+coeftest(model_115_ml)
+```
+
+## ARIMA(1,1,6)
+
+```{r time18, echo=FALSE ,message=FALSE, warning=FALSE}
+model_116_css = arima(df.diff,order=c(1,1,6),method='CSS')
+coeftest(model_116_css)
+
+model_116_ml = arima(df.diff,order=c(1,1,6),method='ML')
+coeftest(model_116_ml)
+```
+
+## ARIMA(6,1,5)
+
+```{r time19, echo=FALSE ,message=FALSE, warning=FALSE}
+model_615_css = arima(df.diff,order=c(6,1,5),method='CSS')
+coeftest(model_615_css)
+
+model_615_ml = arima(df.diff,order=c(6,1,5),method='ML')
+coeftest(model_615_ml)
+```
+
+## ARIMA(6,1,6)
+
+```{r time20, echo=FALSE ,message=FALSE, warning=FALSE}
+model_616_css = arima(df.diff,order=c(6,1,6),method='CSS')
+coeftest(model_616_css)
+
+model_616_ml = arima(df.diff,order=c(6,1,6),method='ML')
+coeftest(model_616_ml)
+```
+
+After building all the possible models we move towards selecting the best model.
+This can be done using the AIC and BIC scores:
+
+```{r time21, echo=FALSE ,message=FALSE, warning=FALSE}
+#sort score function
+sort.score <- function(x, score = c("bic", "aic")){
+  if (score == "aic"){
+    x[with(x, order(AIC)),]
+  } else if (score == "bic") {
+    x[with(x, order(BIC)),]
+  } else {
+    warning('score = "x" only accepts valid arguments ("aic","bic")')
+  }
+}
+
+
+sort.score(AIC(model_111_ml,model_112_ml,model_113_ml,model_115_ml,model_116_ml,model_615_ml,model_616_ml), score = "aic")
+
+sort.score(BIC(model_111_ml,model_112_ml,model_113_ml,model_115_ml,model_116_ml,model_615_ml,model_616_ml), score = "bic")
+
+```
+
+The two tests show contradictory results therefore, we will take ARIMA (6,1,5), ARIMA (1,1,2) ARIMA (1,1,3) and ARIMA (1,1,6) to test for residuals to see which model will be the best.
+
+### Residual analysis for ARIMA(1,1,2)
+
+```{r time442, echo=FALSE ,message=FALSE, warning=FALSE}
+library(TSA)
+library(LSTS)
+#Making the residual analysis formula
+residual.analysis <- function(model, std = TRUE,start = 2, class = c("ARIMA","GARCH","ARMA-GARCH")[1]){
+  # If you have an output from arima() function use class = "ARIMA"
+  # If you have an output from garch() function use class = "GARCH". 
+  # Please note that you should use tseries package to be able to run this function for GARCH models.
+  # If you have an output from ugarchfit() function use class = "ARMA-GARCH"
+  
+  if (class == "ARIMA"){
+    if (std == TRUE){
+      res.model = rstandard(model)
+    }else{
+      res.model = residuals(model)
+    }
+  }else if (class == "GARCH"){
+    res.model = model$residuals[start:model$n.used]
+  }else if (class == "ARMA-GARCH"){
+    res.model = model@fit$residuals
+  }else {
+    stop("The argument 'class' must be either 'ARIMA' or 'GARCH' ")
+  }
+  par(mfrow=c(3,2))
+  plot(res.model,type='o',ylab='Standardised residuals', main="Time series plot of standardised residuals")
+  abline(h=0)
+  hist(res.model,main="Histogram of standardised residuals")
+  acf(res.model,main="ACF of standardised residuals")
+  pacf(res.model,main="PACF of standardised residuals")
+  qqnorm(res.model,main="QQ plot of standardised residuals")
+  qqline(res.model, col = 2)
+  print(shapiro.test(res.model))
+  k=0
+  
+  
+}
+model_112_css = arima(df.diff,order=c(1,1,2),method='CSS')
+residual.analysis(model=model_112_css)
+
+```
+
+### Residual analysis for ARIMA(1,1,6)
+
+```{r time88, echo=FALSE ,message=FALSE, warning=FALSE}
+library(TSA)
+model_116_css = arima(df.diff,order=c(1,1,6),method='CSS')
+residual.analysis(model=model_116_css)
+
+```
+
+### Residual analysis for ARIMA(1,1,3)
+
+```{r time288, echo=FALSE ,message=FALSE, warning=FALSE}
+library(TSA)
+model_113_css = arima(df.diff,order=c(1,1,3),method='CSS')
+residual.analysis(model=model_113_css)
+
+```
+
+### Residual analysis for ARIMA(6,1,5)
+
+```{r 77, echo=FALSE ,message=FALSE, warning=FALSE}
+library(TSA)
+model_615_css = arima(df.diff,order=c(6,1,5),method='CSS')
+residual.analysis(model=model_615_css)
+
+```
+
+Only at ARIMA (1,1,6), and (6,1,5), the models’ standardized residual plots shows no trend nor changing variance meaning that the both of the models are supported. The histograms are also normally distributed and the QQ plot also shows that the data is normally distributed. Both the PACF and ACF plots do not show significant lags as well. The better performing model is ARIMA(6,1,5) but let's trace the next year's prediction of both models and observe.
+
+## Prediction
+### ARIMA (1,1,6) prediction
+
+
+```{r 7766j, echo=FALSE ,message=FALSE, warning=FALSE}
+library(forecast)
+fit1 = Arima(df.diff, model= model_116_css) 
+df.forecast1 = plot(forecast(fit1,h=12), ylim=c(-250000000000,250000000000), main ='Interstate Traffic Volume Forecasting for the Next Year') 
+fit1 = Arima(df.diff, model = model_116_css)
+df_forecast1 = forecast(fit1,h=12)
+knitr::kable(df_forecast1, 
+             caption = "Forecast for Interstate Traffic Volume Forecastign for the Next Year")
+
+```
+
+### ARIMA (6,1,5) prediction
+
+```{r 7766, echo=FALSE ,message=FALSE, warning=FALSE}
+library(forecast)
+fit = Arima(df.diff, model= model_615_css) 
+df.forecast = plot(forecast(fit,h=12), ylim=c(-250000000000,250000000000), main ='Interstate Traffic Volume Forecasting for the Next Year') 
+fit = Arima(df.diff, model = model_615_css)
+df_forecast = forecast(fit,h=12)
+knitr::kable(df_forecast, 
+             caption = "Forecast for Interstate Traffic Volume Forecastign for the Next Year")
+```
+
+As observed above the ARIMA(6,1,5) is much better performing than ARIMA(1,1,6) so it is the model that we retain for the univariate time series modelling. 
+
+# Multivariate analysis
+
+Let's now move on to the multivariate time series modelling.
+
+First of all we need to actually form the time series that pair the time stamp with each one of all the variables we have in our dataset.
+After forming these multiple time series we can plot each one of them as observed below:
+
+
+```{r 7hj6, echo=FALSE ,message=FALSE, warning=FALSE}
+
+library(knitr)
+library(ggplot2)
+library(TSstudio)
+library(xts)
+library(zoo)
+library(tidyr)
+library(FSAdata)
+library(tseries)
+library(purrr)
+library(readxl)
+#Import encoded data set 
+data<- read_excel("D:/Grad school/2nd semester courses/Advanced data analysis/Assignment 3/data_encoded.xlsx")
+
+
+monthly_traffic<- tidyr::separate(data, date_time, c("date", "time"), sep = " ")
+monthly_traffic <- tidyr::separate(monthly_traffic, date, c("year", "month", "day"), sep = "-")
+#Form time series for Temperature variable
+monthly_traffic_data <- monthly_traffic %>% group_by(year,month) %>% summarise(vol_by_month = sum(temp))
+#Make the new data frame and transform it into a time series
+df1 = ts(as.vector(monthly_traffic_data$vol_by_month), start=2012, end=2018, frequency=12)
+#Plot the Time series
+plot(df1, ylab="Temperature", type="o", main="Time Series Plot for Monthly Temperature")
+
+#Form time series for Holiday variable
+monthly_traffic_data1 <- monthly_traffic %>% group_by(year,month) %>% summarise(vol_by_month = sum(holiday))
+#Make the new data frame and transform it into a time series
+df2 = ts(as.vector(monthly_traffic_data1$vol_by_month), start=2012, end=2018, frequency=12)
+#Plot the Time series
+plot(df2, ylab="Holiday", type="o", main="Time Series Plot for Holiday")
+
+
+#Form time series for rain variable
+monthly_traffic_data1 <- monthly_traffic %>% group_by(year,month) %>% summarise(vol_by_month = sum(rain_1h))
+#Make the new data frame and transform it into a time series
+df3 = ts(as.vector(monthly_traffic_data1$vol_by_month), start=2012, end=2018, frequency=12)
+#Plot the Time series
+plot(df3, ylab="Rain", type="o", main="Time Series Plot for Rain")
+
+#Form time series for snow variable
+monthly_traffic_data1 <- monthly_traffic %>% group_by(year,month) %>% summarise(vol_by_month = sum(snow_1h))
+#Make the new data frame and transform it into a time series
+df4 = ts(as.vector(monthly_traffic_data1$vol_by_month), start=2012, end=2018, frequency=12)
+#Plot the Time series
+plot(df4, ylab="Snow", type="o", main="Time Series Plot for Snow")
+
+#Form time series for clouds variable
+monthly_traffic_data1 <- monthly_traffic %>% group_by(year,month) %>% summarise(vol_by_month = sum(clouds_all))
+#Make the new data frame and transform it into a time series
+df5 = ts(as.vector(monthly_traffic_data1$vol_by_month), start=2012, end=2018, frequency=12)
+#Plot the Time series
+plot(df5, ylab="Clouds", type="o", main="Time Series Plot for Clouds coverage")
+
+#Form time series for weather main variable
+monthly_traffic_data1 <- monthly_traffic %>% group_by(year,month) %>% summarise(vol_by_month = sum(weather_main))
+#Make the new data frame and transform it into a time series
+df6 = ts(as.vector(monthly_traffic_data1$vol_by_month), start=2012, end=2018, frequency=12)
+#Plot the Time series
+plot(df6, ylab="Weather_main", type="o", main="Time Series Plot for main weather")
+
+#Form time series for weather description variable
+monthly_traffic_data1 <- monthly_traffic %>% group_by(year,month) %>% summarise(vol_by_month = sum(weather_description))
+#Make the new data frame and transform it into a time series
+df7 = ts(as.vector(monthly_traffic_data1$vol_by_month), start=2012, end=2018, frequency=12)
+#Plot the Time series
+plot(df7, ylab="Weather_descrption", type="o", main="Time Series Plot for weather description")
+
+
+```
+
+Now we move on to forming one Multivariate time series that has all the possible univariate time series we have. We can observe it bellow:
+
+```{r 7hj56, echo=FALSE ,message=FALSE, warning=FALSE}
+
+
+#Form the multivariate time series 
+datall<- data.frame(df,df1,df2,df3,df4,df5,df6,df7)
+colnames(datall)<- c("Traffic","Temp","Holiday","Rain","Snow","Clouds","weather", "weath desc")
+dataa<-ts(as.matrix(datall),start=2012, end=2018, frequency=12)
+
+#Plot the time series
+plot(dataa)
+#plot the time series all together
+autoplot(dataa)+ ggtitle("Time series plot for the Metro Interstate Traffic_Volume")
+
+```
+
+After observing the time series we can observe if each one of the components is stationary or not. To do so we use adf test, the results are shown bellow:
+
+```{r 7hjkk56, echo=FALSE ,message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(data.table)
+library(tidyposterior)
+library(tsibble) 
+library(forecast) 
+library(tseries)
+library(TTR) 
+library(vars) 
+library(fable)
+library(ggfortify)
+library(MTS)
+apply(dataa,2,adf.test)
+
+```
+
+As seen in the adf test results the only stationary time series are those of rain and snow (only ones with p-value < 0.05). In other words our time series is not stationary.
+Before moving on to forming a multivariate model (here we will be using VAR), it is important to prepare the time series, similar to what we did in the univariate analysis.
+
+To make the time series stationary we of course differntiate, then we run the adf test again and observe the results:
+
+```{r 7hjkkjj56, echo=FALSE ,message=FALSE, warning=FALSE}
+dataas <- diffM(dataa)
+apply(dataas,2,adf.test)
+plot.ts(dataas)
+autoplot(ts(dataas,start=2012, end=2018, frequency=12)) +ggtitle("Transformed time series")
+
+```
+
+We can see now that our time series has become stationary as all the p-values observed above are significant (it is also observable in the traced graphs).
+
+Now that out time series is ready we can start VAR modelling.
+To do so, we need to find the good parameter for our VAR modelling. One way to do so is through using the "VARselect" algorithm:
+
+```{r 7akjj56, echo=FALSE ,message=FALSE, warning=FALSE}
+VARselect(dataas,type = "const",lag.max = 7)
+
+```
+
+Observing the selection algorithm results we can conclude that the lag.max=6 model is the optimal option as the selection criteria (AIC, HQ) are better for this one.
+
+We can now create the VAR model with information obtained from the prior selection:
+
+```{r 7akpp6, echo=FALSE ,message=FALSE, warning=FALSE}
+var.m <- vars::VAR(dataas, lag.max = 6, ic= "AIC", type = "none")
+summary(var.m)
+
+```
+
+The results above show the possible models for each one of variables. As we are only interested in the variable "Traffic volume", we can focus only on that part(the first one/on top). We can see that for the equation "Traffic" the variable weather description with a lag=4 is the only one with a significant p.value < 0.05. The variable Traffic with a lag=1 has a p.value of almost 0.1 and can then be accepted in a more comprehensive scenario.
+
+In other words, the traffic volume can mostly be explained by the weather description of 6 hours ago and in a bit more stretched scenario also the traffic volume 2 hours ago.
+
+Through the covariance matrix too, we can remark that Traffic has a high covariance with almost all the other variables except for snow and especially for Temperature, holiday and the two weather variables.
+
+Also, through the correlation matrix we can observe that traffic is highly correlated with the variables Holiday, Temperature and Weather description.
+
+We can also check the serial autocorrelation in the model residuals using the Portmantau test:
+
+```{r 7akppuu6, echo=FALSE ,message=FALSE, warning=FALSE}
+
+serial.test(var.m)
+```
+
+Our p-value is < 0.05 so there is strong evidence of autocorrelation among the VAR time series.
+
+Let's now check the causality between the traffic volume and the other time series:
+
+```{r 7ppa6, echo=FALSE ,message=FALSE, warning=FALSE}
+
+caustest <- causality(var.m, cause = c("Temp","Holiday","Rain","Snow",
+                                       "Clouds","weather", "weath.desc") )
+
+caustest$Granger
+
+```
+
+Our p-value here is high, meaning we should reject H1 and accept H0 that states that the variables (Temperature, Holiday, Rain, Snow, Clouds and weather) do not cause traffic.
+
+## Prediction
+
+Let's now move To Prediction for the next year of 2019:
+
+```{r 7ppppap6, echo=FALSE ,message=FALSE, warning=FALSE}
+
+#Do prediction for all time series
+fc=predict(var.m,n.ahead = 12,ci=0.95)
+#print( paste ("We first see the traced prediction graphs for all the 8 time series " ))
+#plot(fc)
+
+#Extract model for traffic volume from VAR
+Tra<- fc$fcst[1]
+Tra<-Tra$Traffic[,1]
+
+#Plot the predicted year 
+print( paste ("Here we see the predicted values of Traffic volume for the chosen one year range " ))
+autoplot(ts(Tra,start=2019, end=2020, frequency=12)) +ggtitle("Predicted part of time series for Traffic Volume (Year 2019)")
+
+#Fix the stationnary predicted data based on last value of traffic volume
+tail(dataa)
+tra1<-cumsum(Tra)+ 2541007
+
+#Create and trace the time series of traffic volume (real+predicted)
+traff<- ts(c(dataa[,1],tra1),start=2012, end=2019, frequency=12)
+#plot(traff)
+print( paste ("Here we can observe the traffic volume between the years 2012 and 2019 where 2019 values are the predicted one based on our VAR model " ))
+autoplot(traff) +ggtitle("Traffic volume between 2012 and 2019 (Existing +Predicted year)")
+
+#Trace in color
+print( paste ("For better visualization we can trace in seperate colors " ))
+plot(window(traff, start=start(traff), end=2018), col="blue", xlim=range(time(traff)), ylim=range(traff))
+par(new=TRUE)
+plot(window(traff, start=2018), col="red", axes=F, xlab="", ylab="", xlim=range(time(traff)), ylim=range(traff),main="Traffic volume between 2012 and 2019 (Existing +Predicted year)") 
+
+```
+
+We can also predict the next 2 years and observe the results below:
+
+
+```{r 7pnna6, echo=FALSE ,message=FALSE, warning=FALSE}
+library(ggfortify)
+#Do prediction for all time series
+fc1=predict(var.m,n.ahead = 24,ci=0.95)
+
+#Extract model for traffic volume from VAR
+tra2<- fc1$fcst[1]
+tra2<-tra2$Traffic[,1]
+
+#Plot the predicted year 
+print( paste ("Here we see the predicted values of Traffic volume for the chosen two years range " ))
+autoplot(ts(Tra,start=2019, end=2021, frequency=12)) +ggtitle("Predicted part of time series for Traffic Volume (Years 2019 & 2020)")
+
+#Fix the stationary predicted data based on last value of traffic volume
+#tail(dataa)
+tra22<-cumsum(tra2)+ 2541007
+
+#Create and trace the time series of traffic volume (real+predicted)
+traff1<- ts(c(dataa[,1],tra22),start=2012, end=2020, frequency=12)
+
+
+#Trace in color
+
+plot(window(traff1, start=start(traff1), end=2018), col="blue", xlim=range(time(traff1)), ylim=range(traff1))
+par(new=TRUE)
+plot(window(traff1, start=2018), col="red", axes=F, xlab="", ylab="", xlim=range(time(traff1)), ylim=range(traff),main="Traffic volume between 2012 and 2020 (Existing +Predicted years)") 
+
+```
+
+We can see that the quality of the prediction deteriorates when we increase the prediction period from 1 to 2 years.
+
+# Summary and conclusions
+
+Observing the Traffic volume time series in hand, we found that it had no substantial seasonality which can contradict the assumption that traffic volume would present easily observable seasonality. However, throughout the analysis we can see how it is affected by (-in other words-correlate with) the holiday season, the temperature and overall weather condition. 
+After analyzing the traffic volume time series' components, it is pre-processed to be smoothed and then the obtained treated time series is used to seek modelling (either univariate or multivariate) and of course prediction.
+
+For the univariate modelling ARIMA(6,1,5) was chosen as the best model. We can trace one year prediction of this model and that of the multivariate model and compare:
+
+```{r 7pnbbna6, echo=FALSE ,message=FALSE, warning=FALSE}
+library(forecast)
+fore<-forecast(fit,h=12)
+autoplot(fore)+ggtitle("Traffic volume between 2012 and 2019 - Univariate Model")
+
+library(ggfortify)
+plot(window(traff, start=start(traff), end=2018), col="blue", xlim=range(time(traff)), ylim=range(traff))
+par(new=TRUE)
+plot(window(traff, start=2018), col="red", axes=F, xlab="", ylab="", xlim=range(time(traff)), ylim=range(traff),main="Traffic volume between 2012 and 2019 - Multivariate Model") 
+
+```
+
+Observing the predictions from two best retained models, we can notice that the multivariate model shows rather better results than the simpler univariate one, as it seems to capture more of the variance of the traffic volume. 
+As a result, the model obtained from the VAR modelling can be considered as the optimal one.
+
+We must also note that with more prolonged data (larger data set) we can improve the performance of both models. Also, given the many irregularities in the present data set (especially the huge dip in the traffic volume around the end of 2014 that affected the trend), the obtained results can be considered as quite decent.
+
+More models such as VARMA can also be explored in the future for testing better performing models.
+It is also important to note that SVAR and SARIMA models were not tested here, given the fact that the traffic volume data set was found to have no seasonality so it is rather meaningless to seek to build model that has one.
